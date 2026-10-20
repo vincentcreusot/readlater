@@ -85,3 +85,21 @@ def test_error_message_keeps_first_line(ctx, monkeypatch):
     save(ctx)
     process_one(ctx, ("extract",))
     assert ctx.db.conn.execute("SELECT last_error FROM jobs").fetchone()[0] == "RuntimeError: Client error '403'"
+
+
+def test_worker_loop_survives_errors_outside_a_stage(tmp_path, monkeypatch):
+    import threading
+    cfg = load_config(Path("config.example.toml"))
+    cfg.paths.data = tmp_path
+    from readlater.store.db import DB
+    d = DB(cfg.db_path); d.init_schema(); d.close()
+    results = iter([RuntimeError("database is locked"), "idle"])
+
+    def fake(ctx, stages):
+        r = next(results)
+        if isinstance(r, Exception):
+            raise r
+        return r
+    monkeypatch.setattr(worker, "process_one", fake)
+    monkeypatch.setattr(worker, "IDLE_SECONDS", 0)
+    worker._loop(cfg, ("extract",), httpx.Client(), threading.Event(), once=True)

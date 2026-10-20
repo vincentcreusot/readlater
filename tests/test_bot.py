@@ -144,3 +144,62 @@ def test_api_errors_do_not_leak_token():
     with pytest.raises(telegram_bot.TelegramError) as e:
         api.call("getUpdates")
     assert "SECRET" not in str(e.value) and e.value.__cause__ is None and e.value.__suppress_context__
+
+
+def test_resharing_failed_link_retries_it(api, db, cfg):
+    handle_message(api, db, cfg, msg("https://a.com/x", mid=1), now=0)
+    db.fail(db.claim(("extract",), now=0).id, "site down", now=0, permanent=True)
+    deliver_replies(api, db, now=1)
+    handle_message(api, db, cfg, msg("https://a.com/x", mid=2), now=2)
+    assert api.sent[-1][1].startswith("Already saved on ") and "retrying" in api.sent[-1][1]
+    assert db.claim(("extract",), now=2) is not None
+    assert deliver_replies(api, db, now=3) == 0
+
+
+class FlakyAPI(FakeAPI):
+    def __init__(self, bad_reply_to):
+        super().__init__()
+        self.bad = bad_reply_to
+
+    def reply(self, chat_id, text, reply_to=None):
+        if reply_to == self.bad:
+            raise telegram_bot.TelegramError("Bad Request: message to be replied not found", status=400)
+        super().reply(chat_id, text, reply_to)
+
+
+def test_one_undeliverable_reply_does_not_block_others(db, cfg):
+    api = FlakyAPI(bad_reply_to=1)
+    for mid, url in ((1, "https://a.com/1"), (2, "https://a.com/2")):
+        handle_message(FakeAPI(), db, cfg, msg(url, mid=mid), now=0)
+        _summarize(db, db.conn.execute("SELECT article_id FROM saves WHERE reply_to=?", (mid,)).fetchone()[0])
+    assert deliver_replies(api, db, now=1) == 1
+    assert deliver_replies(api, db, now=2) == 0   # the 4xx one is dropped, not retried forever
+
+
+def test_reply_allows_missing_original_and_fits_utf16_limit():
+    import httpx, json as _json
+    seen = {}
+
+    def h(req):
+        seen.update(_json.loads(req.content))
+        return httpx.Response(200, json={"ok": True, "result": {}})
+    api = telegram_bot.TelegramAPI("1:T", httpx.Client(transport=httpx.MockTransport(h)))
+    api.reply(5, "😀" * 3000, reply_to=9)
+    assert seen["reply_parameters"] == {"message_id": 9, "allow_sending_without_reply": True}
+    assert len(seen["text"].encode("utf-16-le")) // 2 <= 4000
+
+
+def test_bot_loop_survives_unexpected_errors(db, cfg):
+    import threading
+    stop = threading.Event()
+    calls = []
+
+    class BoomAPI(FakeAPI):
+        def call(self, method, **params):
+            calls.append(method)
+            if len(calls) == 1:
+                raise RuntimeError("database is locked")
+            stop.set()
+            return []
+    telegram_bot.run(cfg, db, BoomAPI(), stop, error_wait=0)
+    assert len(calls) == 2

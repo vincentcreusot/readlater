@@ -49,3 +49,23 @@ def test_set_extracted_merges_on_same_text(db):
     dup = db.add_save(source="x", source_id="2", saved_at=5, payload="https://mirror.com/copy", priority=0, now=5).article_id
     mirror = dataclasses.replace(ex, final_url="https://mirror.com/copy", canonical_url="https://mirror.com/copy")
     assert db.set_extracted(dup, mirror) == (keep, True)
+
+
+def test_redirect_into_failed_article_revives_it(db):
+    ex = parse_html(FIX, "https://blog.com/post/1")
+    old = db.add_save(source="x", source_id="1", saved_at=0, payload="https://blog.com/post/1", priority=0, now=0).article_id
+    db.fail(db.claim(("extract",), now=0).id, "site down", now=0, permanent=True)
+    dup = db.add_save(source="x", source_id="2", saved_at=5, payload="https://bit.ly/q", priority=0, now=5).article_id
+    assert db.set_extracted(dup, ex) == (old, True)
+    assert db.get_article(old)["text"] == ex.text
+    jobs = dict(db.conn.execute("SELECT stage, status FROM jobs WHERE article_id=?", (old,)).fetchall())
+    assert jobs == {"extract": "done", "summarize": "pending"}
+
+
+def test_same_text_on_same_site_is_not_merged(db):
+    ex = parse_html(FIX, "https://news.com/story-1")
+    a = db.add_save(source="x", source_id="1", saved_at=0, payload="https://news.com/story-1", priority=0, now=0).article_id
+    db.set_extracted(a, dataclasses.replace(ex, final_url="https://news.com/story-1", canonical_url="https://news.com/story-1"))
+    b = db.add_save(source="x", source_id="2", saved_at=0, payload="https://news.com/story-2", priority=0, now=0).article_id
+    wall = dataclasses.replace(ex, final_url="https://news.com/story-2", canonical_url="https://news.com/story-2")
+    assert db.set_extracted(b, wall) == (b, False)

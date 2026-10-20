@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from readlater.dedupe.canonicalize import canonicalize
 from readlater.dedupe.content_hash import content_hash
@@ -45,6 +46,7 @@ class SaveResult:
     article_id: int | None
     first_saved: int | None
     tldr: str | None
+    retrying: bool = False   # the known article had failed; its jobs were re-queued
 
 
 class DB:
@@ -120,7 +122,10 @@ class DB:
                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
                       (source, source_id, saved_at, payload, article_id, reply_chat, reply_to))
             if found:
-                return SaveResult(True, True, article_id, first, tldr[0] if tldr else None)
+                # sharing a failed article again is a request to try again
+                retrying = c.execute("UPDATE jobs SET status='pending', attempts=0, next_try_at=0 "
+                                     "WHERE article_id=? AND status='failed'", (article_id,)).rowcount > 0
+                return SaveResult(True, True, article_id, first, tldr[0] if tldr else None, retrying)
             return SaveResult(True, False, article_id, None, None)
 
     def add_email(self, message_id: str, date: int, from_addr: str) -> None:
@@ -136,20 +141,41 @@ class DB:
         Returns (surviving article id, merged).
         """
         digest = content_hash(ex.text)
+        host = urlsplit(ex.canonical_url).hostname
         with self.tx() as c:
-            other = c.execute("SELECT id FROM articles WHERE id != ? AND (canonical_url=? OR content_hash=?) "
-                              "ORDER BY id LIMIT 1", (article_id, ex.canonical_url, digest)).fetchone()
+            other = c.execute("SELECT id, text FROM articles WHERE id != ? AND canonical_url=?",
+                              (article_id, ex.canonical_url)).fetchone()
+            if not other:
+                # same text on the same site is more likely a paywall or consent page than one article
+                other = next((r for r in c.execute("SELECT id, text, canonical_url FROM articles "
+                                                   "WHERE id != ? AND content_hash=? ORDER BY id",
+                                                   (article_id, digest))
+                              if r["canonical_url"] is None or urlsplit(r["canonical_url"]).hostname != host), None)
             if other:
-                c.execute("UPDATE saves SET article_id=? WHERE article_id=?", (other[0], article_id))
+                keep = other["id"]
+                priority = c.execute("SELECT min(priority) FROM jobs WHERE article_id=?", (article_id,)).fetchone()[0]
+                c.execute("UPDATE saves SET article_id=? WHERE article_id=?", (keep, article_id))
                 c.execute("DELETE FROM jobs WHERE article_id=?", (article_id,))
                 c.execute("DELETE FROM summaries WHERE article_id=?", (article_id,))
                 c.execute("DELETE FROM articles WHERE id=?", (article_id,))
-                return other[0], True
-            c.execute("UPDATE articles SET url=?, canonical_url=?, title=?, site=?, author=?, published_at=?, "
-                      "text=?, content_hash=?, word_count=? WHERE id=?",
-                      (ex.final_url, ex.canonical_url, ex.title, ex.site, ex.author, ex.published_at,
-                       ex.text, digest, len(ex.text.split()), article_id))
+                if other["text"] is None:
+                    # the existing article was never extracted (failed or still queued): use this extraction
+                    self._store_extraction(c, keep, ex, digest)
+                    c.execute("UPDATE jobs SET status='done', last_error=NULL WHERE article_id=? AND stage='extract'",
+                              (keep,))
+                    c.execute("INSERT INTO jobs (article_id, stage, priority, next_try_at) VALUES (?, 'summarize', ?, 0) "
+                              "ON CONFLICT(article_id, stage) DO UPDATE SET status='pending', attempts=0, "
+                              "next_try_at=0", (keep, priority if priority is not None else 0))
+                return keep, True
+            self._store_extraction(c, article_id, ex, digest)
             return article_id, False
+
+    @staticmethod
+    def _store_extraction(c, article_id: int, ex, digest: str) -> None:
+        c.execute("UPDATE articles SET url=?, canonical_url=?, title=?, site=?, author=?, published_at=?, "
+                  "text=?, content_hash=?, word_count=? WHERE id=?",
+                  (ex.final_url, ex.canonical_url, ex.title, ex.site, ex.author, ex.published_at,
+                   ex.text, digest, len(ex.text.split()), article_id))
 
     def save_summary(self, article_id: int, model: str, data: dict, now: int) -> None:
         self.conn.execute(

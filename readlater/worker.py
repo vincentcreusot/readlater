@@ -79,7 +79,12 @@ def _loop(cfg: Config, stages: tuple[str, ...], http: httpx.Client, stop: thread
     ctx = Ctx(cfg=cfg, db=db, http=http)
     try:
         while not stop.is_set():
-            result = process_one(ctx, stages)
+            try:
+                result = process_one(ctx, stages)
+            except Exception:   # e.g. "database is locked"; never let the loop die silently
+                log.exception("%s loop error", stages[0])
+                stop.wait(IDLE_SECONDS)
+                continue
             if result == "idle":
                 if once:
                     return

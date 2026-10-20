@@ -26,6 +26,23 @@ START = "Share a link or paste an article and I'll summarize it. Commands: /rece
 class TelegramError(Exception):
     """A Bot API call failed; the message never contains the token."""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+def _fit_utf16(text: str, limit: int = MAX_TEXT) -> str:
+    """Telegram counts message length in UTF-16 code units, so emoji count double."""
+    if len(text.encode("utf-16-le")) // 2 <= limit:
+        return text
+    out, units = [], 0
+    for ch in text:
+        units += 2 if ord(ch) > 0xFFFF else 1
+        if units > limit:
+            break
+        out.append(ch)
+    return "".join(out)
+
 
 class TelegramAPI:
     def __init__(self, token: str, client: httpx.Client):
@@ -40,14 +57,20 @@ class TelegramAPI:
         try:
             r = self.http.post(self.base + method, json=params)
             r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            try:
+                detail = e.response.json().get("description") or str(e)
+            except ValueError:
+                detail = str(e)
+            raise TelegramError(self.redact(detail), e.response.status_code) from None   # the URL holds the token
         except httpx.HTTPError as e:
-            raise TelegramError(self.redact(str(e))) from None   # the URL holds the token
+            raise TelegramError(self.redact(str(e))) from None
         return r.json()["result"]
 
     def reply(self, chat_id: int, text: str, reply_to: int | None = None) -> None:
-        params = {"chat_id": chat_id, "text": text[:MAX_TEXT], "link_preview_options": {"is_disabled": True}}
-        if reply_to:
-            params["reply_parameters"] = {"message_id": reply_to}
+        params = {"chat_id": chat_id, "text": _fit_utf16(text), "link_preview_options": {"is_disabled": True}}
+        if reply_to:   # still send if the user deleted the message we answer
+            params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
         self.call("sendMessage", **params)
 
 
@@ -91,6 +114,9 @@ def handle_message(api, db: DB, cfg, m: dict, now: int) -> None:
         if not res.created:
             continue
         if res.known_article:
+            if res.retrying:
+                api.reply(chat, f"Already saved on {_day(res.first_saved)}, but it failed last time — retrying now.", mid)
+                continue
             api.reply(chat, f"Already saved on {_day(res.first_saved)}\n\n{res.tldr or IN_PROGRESS}", mid)
             if res.tldr:   # already answered; without a TL;DR the summary follows when ready
                 save_id = db.conn.execute("SELECT id FROM saves WHERE source='telegram' AND source_id=?",
@@ -130,13 +156,20 @@ def deliver_replies(api, db: DB, now: int) -> int:
             text = format_summary(r)
         else:
             text = f"Couldn't summarize {r.url or 'your text'}: {r.error}\nSend /retry to try again."
-        api.reply(r.chat_id, text, r.reply_to)
+        try:
+            api.reply(r.chat_id, text, r.reply_to)
+        except TelegramError as e:
+            if e.status is None or e.status == 429 or e.status >= 500:
+                raise   # Telegram or the network is down: try the whole batch again later
+            log.warning("dropping undeliverable reply for save %s: %s", r.save_id, e)
+            db.mark_replied(r.save_id, now)
+            continue
         db.mark_replied(r.save_id, now)
         sent += 1
     return sent
 
 
-def run(cfg, db: DB, api: TelegramAPI, stop: threading.Event) -> None:
+def run(cfg, db: DB, api: TelegramAPI, stop: threading.Event, error_wait: float = 10) -> None:
     while not stop.is_set():
         try:
             offset = int(db.get_cursor("telegram") or 0)
@@ -145,4 +178,7 @@ def run(cfg, db: DB, api: TelegramAPI, stop: threading.Event) -> None:
             deliver_replies(api, db, int(time.time()))
         except TelegramError as e:
             log.warning("telegram error: %s", e)
-            stop.wait(10)
+            stop.wait(error_wait)
+        except Exception:
+            log.exception("bot loop error")
+            stop.wait(error_wait)
