@@ -6,6 +6,7 @@ import signal
 import sys
 import threading
 import time
+from pathlib import Path
 
 from readlater.config import load_config
 from readlater.sources.links import item_key
@@ -80,6 +81,18 @@ def cmd_bot(cfg, args) -> int:
     return 0
 
 
+def cmd_import_mail(cfg, args) -> int:
+    from readlater.sources import importer
+    if not args.mbox:
+        print("give --mbox PATH (an mbox export of your mailbox)", file=sys.stderr)
+        return 2
+    messages = importer.iter_mbox(args.mbox)
+    st = importer.import_messages(_db(cfg), messages, cfg.mail.own_addresses, dry_run=args.dry_run,
+                                  now=int(time.time()))
+    print(f"{st.messages} messages, {st.found} articles found, {st.queued} queued")
+    return 0
+
+
 def cmd_retry(cfg, args) -> int:
     print(f"re-queued {_db(cfg).retry_failed()} failed jobs")
     return 0
@@ -100,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_show)
     sub.add_parser("retry", help="re-queue failed jobs").set_defaults(fn=cmd_retry)
     sub.add_parser("bot", help="run the Telegram bot").set_defaults(fn=cmd_bot)
+    m = sub.add_parser("import-mail", help="one-time import of self-sent, subject-less emails")
+    m.add_argument("--mbox", type=Path, help="mbox export to read")
+    m.add_argument("--dry-run", action="store_true", help="list what would be imported")
+    m.set_defaults(fn=cmd_import_mail)
     return p
 
 
