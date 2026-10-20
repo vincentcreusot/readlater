@@ -2,6 +2,8 @@
 name = "readlater"
 version = "0.1.0"
 description = "Local read-later archive: saves links, summarizes them with a local LLM"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "httpx",

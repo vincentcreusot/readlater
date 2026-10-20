@@ -103,3 +103,7 @@ Design documents:
 Working: the bot, the worker, dedupe, long articles, the email import, the Markdown export, and deployment.
 
 Not built yet: a web UI with keyword and semantic search, the weekly digest, and fallbacks for JavaScript-heavy pages and PDFs.
+
+## License
+
+[MIT](LICENSE)
