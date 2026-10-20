@@ -290,8 +290,9 @@ def test_scripts_use_the_unit_paths():
 docker run --rm -v "$PWD":/src:ro -e READLATER_NO_SYSTEMD=1 debian:trixie bash -euxc '
   apt-get update -qq && apt-get install -y -qq sudo git >/dev/null
   git config --system --add safe.directory "*"
-  git clone -q /src /tmp/origin                       # stands in for the GitHub repo
+  git clone -q /src /tmp/origin && git -C /tmp/origin checkout -q -B main   # stands in for the GitHub repo
   bash /tmp/origin/deploy/install.sh /tmp/origin
+  cp /srv/readlater/app/deploy/config.server.toml /etc/readlater/config.toml
   readlater-update
   sudo -u readlater touch /srv/readlater/data/marker
   git -C /tmp/origin -c user.email=t@t -c user.name=t commit -q --allow-empty -m "new release"
@@ -328,7 +329,7 @@ Follow `deploy/README.md`. Each step lists the result that means it worked.
 
   Expected: `curl http://<ollama-host>:11434/api/tags` works from node A.
 - [ ] **Step 3: Install.** On node A: `git clone https://github.com/<owner>/<repo>.git /tmp/readlater`, read `deploy/install.sh`, then `sudo bash /tmp/readlater/deploy/install.sh https://github.com/<owner>/<repo>.git`. Expected: the "next steps" text, `id readlater` works, and `/usr/local/sbin/readlater-update` exists.
-- [ ] **Step 4: Deploy the code.** On node A: `sudo readlater-update`. Expected: `deployed: <commit>`, the same commit as `git log -1 --oneline` on the dev machine.
+- [ ] **Step 4: Deploy the code** after step 5's config and token are in place (`deploy/README.md` lists them in that order). On node A: `sudo readlater-update`. Expected: `deployed: <commit>`, the same commit as `git log -1 --oneline` on the dev machine.
 - [ ] **Step 5: Config and token.**
   - `sudo cp /srv/readlater/app/deploy/config.server.toml /etc/readlater/config.toml`, then set `[ollama] url` to node B's name
   - `sudo install -m 600 /dev/null /etc/readlater/telegram.secret && sudo nano /etc/readlater/telegram.secret`, pasting the BotFather token.
