@@ -67,3 +67,19 @@ def test_uv_is_pinned_and_checksummed():
     assert "sha256sum -c" in install and not re.search(r"\|\s*(sudo\s+)?(env(\s+\S+=\S*)*\s+)?(ba)?sh\b", install)
     for arch in ("x86_64", "aarch64"):
         assert re.search(arch + r"\)\s+UV_SHA256=[0-9a-f]{64}", install)
+
+
+def test_update_refuses_untracked_files_and_concurrent_runs():
+    update = Path("deploy/update.sh").read_text()
+    assert 'status --porcelain' in update and "diff --quiet" not in update
+    assert "flock -n" in update and update.index("flock -n") < update.index("fetch")
+
+
+def test_python_version_is_pinned_for_the_server():
+    assert Path(".python-version").read_text().strip() == "3.13"
+
+
+def test_runbook_never_puts_the_token_on_a_command_line():
+    readme = Path("deploy/README.md").read_text()
+    assert "READLATER_TELEGRAM_TOKEN=" not in readme and "cat /etc/readlater/telegram.secret" not in readme
+    assert "LoadCredential=telegram:/etc/readlater/telegram.secret" in readme

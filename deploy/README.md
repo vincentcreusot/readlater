@@ -63,10 +63,13 @@ sudo readlater-update
 ### Check everything
 
 ```bash
-sudo -u readlater env READLATER_CONFIG=/etc/readlater/config.toml \
-  READLATER_TELEGRAM_TOKEN="$(sudo cat /etc/readlater/telegram.secret)" \
+sudo systemd-run --pipe --wait --quiet -p User=readlater \
+  -p LoadCredential=telegram:/etc/readlater/telegram.secret \
+  -E READLATER_CONFIG=/etc/readlater/config.toml \
   /srv/readlater/app/.venv/bin/readlater check
 ```
+
+systemd hands the token over the same way it does for the bot, so the token never shows up in the process list.
 
 Every line should say `ok`. A `FAIL` line names the problem, e.g. `model qwen3.5:4b not pulled; run: ollama pull qwen3.5:4b`.
 

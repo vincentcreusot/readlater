@@ -15,7 +15,13 @@ CONFIG=/etc/readlater/config.toml
 URL="$(cat /etc/readlater/repo-url)"
 as_app() { sudo -u readlater -H "$@"; }
 
-if ! as_app git -C "$APP" diff --quiet || ! as_app git -C "$APP" diff --cached --quiet; then
+exec 9>/run/readlater-update.lock
+if ! flock -n 9; then
+  echo "another readlater-update is already running" >&2
+  exit 1
+fi
+
+if [ -n "$(as_app git -C "$APP" status --porcelain)" ]; then   # edited, staged or added files
   echo "local changes in $APP; refusing to update (inspect with: sudo -u readlater git -C $APP status)" >&2
   exit 1
 fi
