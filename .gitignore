@@ -4,3 +4,14 @@ __pycache__/
 dev/
 .superpowers/
 *.egg-info/
+.pytest_cache/
+
+# never commit local data or secrets
+*.db
+*.db-wal
+*.db-shm
+*.mbox
+*.eml
+*.secret
+.env
+config.toml
