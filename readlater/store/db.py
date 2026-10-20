@@ -26,6 +26,19 @@ class Job:
 
 
 @dataclass(frozen=True)
+class Reply:
+    save_id: int
+    chat_id: int
+    reply_to: int
+    status: str            # done | failed
+    title: str | None
+    tldr: str | None
+    key_points: list[str]
+    url: str | None
+    error: str | None
+
+
+@dataclass(frozen=True)
 class SaveResult:
     created: bool
     known_article: bool
@@ -190,5 +203,37 @@ class DB:
         return self.conn.execute("UPDATE jobs SET status='pending' WHERE status='running'").rowcount
 
     def retry_failed(self) -> int:
-        return self.conn.execute("UPDATE jobs SET status='pending', attempts=0, next_try_at=0 "
-                                 "WHERE status='failed'").rowcount
+        with self.tx() as c:
+            # saves already told "couldn't summarize" get a reply again once the retry succeeds
+            c.execute("UPDATE saves SET replied_at=NULL WHERE reply_chat IS NOT NULL AND article_id IN "
+                      "(SELECT article_id FROM jobs WHERE status='failed')")
+            return c.execute("UPDATE jobs SET status='pending', attempts=0, next_try_at=0 "
+                             "WHERE status='failed'").rowcount
+
+    # Telegram replies
+
+    def pending_replies(self) -> list[Reply]:
+        rows = self.conn.execute("""
+            SELECT s.id, s.reply_chat, s.reply_to, a.url, coalesce(a.title, sm.title) AS title,
+                   sm.tldr, sm.key_points,
+                   (SELECT last_error FROM jobs j WHERE j.article_id=a.id AND j.status='failed' LIMIT 1) AS error
+              FROM saves s JOIN articles a ON a.id = s.article_id
+              LEFT JOIN summaries sm ON sm.article_id = a.id
+             WHERE s.reply_chat IS NOT NULL AND s.replied_at IS NULL
+               AND (sm.article_id IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM jobs j WHERE j.article_id=a.id AND j.status='failed'))
+             ORDER BY s.id""").fetchall()
+        return [Reply(save_id=r["id"], chat_id=r["reply_chat"], reply_to=r["reply_to"],
+                      status="done" if r["tldr"] is not None else "failed", title=r["title"], tldr=r["tldr"],
+                      key_points=json.loads(r["key_points"]) if r["key_points"] else [],
+                      url=r["url"], error=r["error"]) for r in rows]
+
+    def mark_replied(self, save_id: int, now: int) -> None:
+        self.conn.execute("UPDATE saves SET replied_at=? WHERE id=?", (now, save_id))
+
+    def recent(self, limit: int = 10) -> list[sqlite3.Row]:
+        return self.conn.execute("""
+            SELECT s.saved_at, coalesce(a.title, sm.title, s.payload) AS title
+              FROM saves s JOIN articles a ON a.id = s.article_id
+              LEFT JOIN summaries sm ON sm.article_id = a.id
+             ORDER BY s.saved_at DESC, s.id DESC LIMIT ?""", (limit,)).fetchall()

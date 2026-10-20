@@ -67,6 +67,19 @@ def cmd_show(cfg, args) -> int:
     return 0
 
 
+def cmd_bot(cfg, args) -> int:
+    import httpx
+    from readlater.sources import telegram_bot
+    api = telegram_bot.TelegramAPI(telegram_bot.load_token(), httpx.Client(timeout=telegram_bot.POLL_TIMEOUT + 15))
+    stop = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    try:
+        telegram_bot.run(cfg, _db(cfg), api, stop)
+    except KeyboardInterrupt:
+        stop.set()
+    return 0
+
+
 def cmd_retry(cfg, args) -> int:
     print(f"re-queued {_db(cfg).retry_failed()} failed jobs")
     return 0
@@ -86,11 +99,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("article_id", type=int)
     s.set_defaults(fn=cmd_show)
     sub.add_parser("retry", help="re-queue failed jobs").set_defaults(fn=cmd_retry)
+    sub.add_parser("bot", help="run the Telegram bot").set_defaults(fn=cmd_bot)
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def setup_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)   # request lines would log the bot token
+
+
+def main(argv: list[str] | None = None) -> int:
+    setup_logging()
     args = build_parser().parse_args(argv)
     return args.fn(load_config(), args)
 
