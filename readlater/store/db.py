@@ -12,6 +12,19 @@ from readlater.sources.links import is_url
 SCHEMA = Path(__file__).with_name("schema.sql")
 
 
+BACKOFF_SECONDS = (300, 1800, 7200)
+MAX_ATTEMPTS = 4
+
+
+@dataclass(frozen=True)
+class Job:
+    id: int
+    article_id: int
+    stage: str
+    priority: int
+    attempts: int
+
+
 @dataclass(frozen=True)
 class SaveResult:
     created: bool
@@ -119,3 +132,42 @@ class DB:
     def enqueue(self, article_id: int, stage: str, priority: int, now: int) -> None:
         self.conn.execute("INSERT OR IGNORE INTO jobs (article_id, stage, priority, next_try_at) VALUES (?, ?, ?, ?)",
                           (article_id, stage, priority, now))
+
+    def claim(self, stages: tuple[str, ...], now: int) -> Job | None:
+        marks = ",".join("?" * len(stages))
+        row = self.conn.execute(
+            f"""UPDATE jobs SET status='running'
+                 WHERE id = (SELECT id FROM jobs
+                              WHERE status='pending' AND next_try_at <= ? AND stage IN ({marks})
+                              ORDER BY priority, id LIMIT 1)
+             RETURNING id, article_id, stage, priority, attempts""",
+            (now, *stages)).fetchone()
+        return Job(*row) if row else None
+
+    def finish(self, job_id: int, next_stage: str | None, now: int) -> None:
+        with self.tx() as c:
+            article_id, priority = c.execute("UPDATE jobs SET status='done', last_error=NULL WHERE id=? "
+                                             "RETURNING article_id, priority", (job_id,)).fetchone()
+            if next_stage:
+                self.enqueue(article_id, next_stage, priority, now)
+
+    def fail(self, job_id: int, error: str, now: int, permanent: bool = False) -> None:
+        with self.tx() as c:
+            attempts = c.execute("UPDATE jobs SET attempts=attempts+1, last_error=? WHERE id=? RETURNING attempts",
+                                 (error, job_id)).fetchone()[0]
+            if permanent or attempts >= MAX_ATTEMPTS:
+                c.execute("UPDATE jobs SET status='failed' WHERE id=?", (job_id,))
+            else:
+                c.execute("UPDATE jobs SET status='pending', next_try_at=? WHERE id=?",
+                          (now + BACKOFF_SECONDS[attempts - 1], job_id))
+
+    def defer(self, job_id: int, until: int, error: str) -> None:
+        self.conn.execute("UPDATE jobs SET status='pending', next_try_at=?, last_error=? WHERE id=?",
+                          (until, error, job_id))
+
+    def reset_running(self) -> int:
+        return self.conn.execute("UPDATE jobs SET status='pending' WHERE status='running'").rowcount
+
+    def retry_failed(self) -> int:
+        return self.conn.execute("UPDATE jobs SET status='pending', attempts=0, next_try_at=0 "
+                                 "WHERE status='failed'").rowcount
