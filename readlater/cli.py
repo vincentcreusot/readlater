@@ -1,6 +1,5 @@
 """Command-line entry point: readlater <command>."""
 import argparse
-import json
 import logging
 import signal
 import sys
@@ -47,24 +46,18 @@ def cmd_worker(cfg, args) -> int:
 
 
 def cmd_show(cfg, args) -> int:
-    db = _db(cfg)
-    art = db.get_article(args.article_id)
-    if not art:
+    from readlater.export import article_markdown
+    md = article_markdown(_db(cfg), args.article_id, full=args.full)
+    if md is None:
         print(f"no article {args.article_id}", file=sys.stderr)
         return 1
-    s = db.conn.execute("SELECT * FROM summaries WHERE article_id=?", (art["id"],)).fetchone()
-    print(s["title"] if s and not art["title"] else art["title"] or "(untitled)")
-    print(art["url"] or "(pasted text)")
-    if not s:
-        jobs = db.conn.execute("SELECT stage, status, last_error FROM jobs WHERE article_id=?", (art["id"],))
-        for j in jobs:
-            print(f"[{j['stage']}: {j['status']}{' — ' + j['last_error'] if j['last_error'] else ''}]")
-        return 0
-    print()
-    print(s["tldr"])
-    print()
-    for p in json.loads(s["key_points"]):
-        print(f"• {p}")
+    print(md, end="")
+    return 0
+
+
+def cmd_export(cfg, args) -> int:
+    from readlater.export import export_markdown
+    print(f"exported {export_markdown(_db(cfg), args.directory)} articles to {args.directory}")
     return 0
 
 
@@ -111,9 +104,13 @@ def build_parser() -> argparse.ArgumentParser:
     w = sub.add_parser("worker", help="run the extract and summarize queue")
     w.add_argument("--once", action="store_true", help="exit when the queue is empty")
     w.set_defaults(fn=cmd_worker)
-    s = sub.add_parser("show", help="print an article's summary")
+    s = sub.add_parser("show", help="print an article's summary as Markdown")
     s.add_argument("article_id", type=int)
+    s.add_argument("--full", action="store_true", help="add frontmatter and the full article text")
     s.set_defaults(fn=cmd_show)
+    e = sub.add_parser("export", help="write every summarized article to DIR as a Markdown file")
+    e.add_argument("directory", type=Path)
+    e.set_defaults(fn=cmd_export)
     sub.add_parser("retry", help="re-queue failed jobs").set_defaults(fn=cmd_retry)
     sub.add_parser("bot", help="run the Telegram bot").set_defaults(fn=cmd_bot)
     m = sub.add_parser("import-mail", help="one-time import of self-sent, subject-less emails")

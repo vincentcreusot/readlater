@@ -12,3 +12,14 @@ def test_add_and_readd(tmp_path, monkeypatch, capsys):
     assert "queued article 1" in capsys.readouterr().out
     main(["add", "https://example.com/a"])
     assert "already saved as article 1" in capsys.readouterr().out
+
+
+def test_show_prints_markdown(tmp_path, monkeypatch, capsys):
+    cfg = Path("config.example.toml").read_text().replace('data = "./data"', f'data = "{tmp_path}"')
+    (tmp_path / "c.toml").write_text(cfg)
+    monkeypatch.setenv("READLATER_CONFIG", str(tmp_path / "c.toml"))
+    main(["init-db"]); main(["add", "https://example.com/a"]); capsys.readouterr()
+    assert main(["show", "1"]) == 0
+    assert capsys.readouterr().out.startswith("# https://example.com/a")
+    assert main(["export", str(tmp_path / "out")]) == 0
+    assert "exported 0 articles" in capsys.readouterr().out
