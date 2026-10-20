@@ -1,0 +1,21 @@
+[Unit]
+Description=readlater worker (extract and summarize queue)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=readlater
+WorkingDirectory=/srv/readlater/app
+ExecStart=/srv/readlater/app/.venv/bin/readlater worker
+Environment=READLATER_CONFIG=/etc/readlater/config.toml PYTHONDONTWRITEBYTECODE=1
+Restart=always
+RestartSec=30
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/readlater/data
+
+[Install]
+WantedBy=multi-user.target

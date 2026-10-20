@@ -1,0 +1,22 @@
+[Unit]
+Description=readlater Telegram bot
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=readlater
+WorkingDirectory=/srv/readlater/app
+ExecStart=/srv/readlater/app/.venv/bin/readlater bot
+Environment=READLATER_CONFIG=/etc/readlater/config.toml PYTHONDONTWRITEBYTECODE=1
+LoadCredential=telegram:/etc/readlater/telegram.secret
+Restart=always
+RestartSec=15
+# hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/readlater/data
+
+[Install]
+WantedBy=multi-user.target

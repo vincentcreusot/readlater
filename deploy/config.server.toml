@@ -1,0 +1,23 @@
+# Copy to /etc/readlater/config.toml on the server and fill in the placeholders.
+# `readlater check` reports anything still wrong.
+
+[telegram]
+allowed_user_ids = [123456789]     # replace with your ID (readlater check tells you)
+
+# [mail]                           # only for `import-mail` over IMAP; an mbox export needs none of this
+# host = "imap.example.com"
+# user = "you@example.com"
+# folder = "INBOX"
+# own_addresses = ["you@example.com"]
+
+[fetch]
+contact = ""                       # optional e-mail or URL for the User-Agent; Wikipedia blocks bots without one
+
+[ollama]
+url = "http://<ollama-host>:11434" # the inference box's Tailscale name, or http://localhost:11434 on a single box
+model = "qwen3.5:4b"
+embed_model = "nomic-embed-text"
+num_ctx = 16384
+
+[paths]
+data = "/srv/readlater/data"
