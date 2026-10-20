@@ -6,7 +6,8 @@ import pytest
 
 from readlater.config import OllamaCfg
 from readlater.errors import TransientError
-from readlater.summarizer.ollama import MAX_INPUT_CHARS, SYSTEM, Summary, summarize
+from readlater.summarizer.ollama import (CHUNK_CHARS, COMBINE_SYSTEM, MAX_CHUNKS, MAX_INPUT_CHARS, SYSTEM,
+                                        Summary, summarize)
 
 CFG = OllamaCfg(url="http://ollama:11434")
 OK = {"title": "T", "tldr": "One. Two.", "key_points": ["a", "b", "c"], "tags": ["x"],
@@ -31,14 +32,51 @@ def test_request_shape():
     assert seen["messages"][1]["content"] == "Title: T\n<article>\nbody\n</article>"
 
 
-def test_truncates_long_text():
-    seen = {}
+def chat_log(responses=None):
+    """A handler that records each request's messages and answers with numbered summaries."""
+    calls = []
 
     def h(req):
-        seen["c"] = json.loads(req.content)["messages"][1]["content"]
-        return httpx.Response(200, json={"message": {"content": json.dumps(OK)}})
-    run(h, text="x" * 60_000, title=None)
-    assert seen["c"] == "<article>\n" + "x" * MAX_INPUT_CHARS + "\n</article>"
+        body = json.loads(req.content)
+        calls.append(body["messages"])
+        return httpx.Response(200, json={"message": {"content": json.dumps(dict(OK, tldr=f"Part {len(calls)}."))}})
+    return calls, h
+
+
+def test_short_text_is_one_call():
+    calls, h = chat_log()
+    run(h, text="x" * MAX_INPUT_CHARS)
+    assert len(calls) == 1
+
+
+def test_long_text_is_summarized_in_parts_then_combined():
+    para = "word " * 1000                      # ~5,000 chars per paragraph
+    text = "\n".join([para] * 20)              # ~100,000 chars -> 3 parts
+    calls, h = chat_log()
+    result = run(h, text=text, title="Long")
+    parts, final = calls[:-1], calls[-1]
+    assert len(parts) == 3
+    for i, msgs in enumerate(parts, 1):
+        user = msgs[1]["content"]
+        assert user.startswith(f"Title: Long (part {i} of 3)\n<article>\n")
+        body = user.split("<article>\n", 1)[1].rsplit("\n</article>", 1)[0]
+        assert len(body) <= CHUNK_CHARS and not body.startswith(" ")   # split on paragraph boundaries
+    assert final[0]["content"] == COMBINE_SYSTEM
+    assert "Part 1." in final[1]["content"] and "Part 3." in final[1]["content"]
+    assert result.tldr == "Part 4."
+
+
+def test_very_long_text_stops_at_max_parts():
+    text = "\n".join(["word " * 1000] * 200)    # ~1,000,000 chars
+    calls, h = chat_log()
+    run(h, text=text)
+    assert len(calls) == MAX_CHUNKS + 1
+
+
+def test_unbreakable_text_is_hard_split():
+    calls, h = chat_log()
+    run(h, text="x" * (CHUNK_CHARS * 2 + 10))
+    assert len(calls) == 4
 
 
 def test_connect_error_is_transient():

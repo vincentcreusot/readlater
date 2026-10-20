@@ -19,6 +19,11 @@ def _slug(title: str | None, article_id: int) -> str:
     return slug or f"article-{article_id}"
 
 
+def flatten_points(points: list[str]) -> list[str]:
+    """Models sometimes pack extra points into one item, separated by line breaks: split them out."""
+    return [line.strip() for p in points for line in p.splitlines() if line.strip()]
+
+
 def _paragraphs(text: str) -> str:
     return "\n\n".join(line.strip() for line in text.splitlines() if line.strip())
 
@@ -59,8 +64,7 @@ def article_markdown(db: DB, article_id: int, *, full: bool = False) -> str | No
 
     if s:
         out.append(f"## TL;DR\n\n{s['tldr']}\n\n")
-        # models sometimes pack extra points into one item, separated by line breaks
-        points = [line.strip() for p in json.loads(s["key_points"]) for line in p.splitlines() if line.strip()]
+        points = flatten_points(json.loads(s["key_points"]))
         out.append("## Key points\n\n" + "\n".join(f"- {p}" for p in points) + "\n\n")
         tags = json.loads(s["tags"])
         if tags:

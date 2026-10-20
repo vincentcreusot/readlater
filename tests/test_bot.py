@@ -13,7 +13,7 @@ class FakeAPI:
     def __init__(self):
         self.sent = []
 
-    def reply(self, chat_id, text, reply_to=None):
+    def reply(self, chat_id, text, reply_to=None, html=False):
         self.sent.append((chat_id, text, reply_to))
 
 
@@ -161,10 +161,10 @@ class FlakyAPI(FakeAPI):
         super().__init__()
         self.bad = bad_reply_to
 
-    def reply(self, chat_id, text, reply_to=None):
+    def reply(self, chat_id, text, reply_to=None, html=False):
         if reply_to == self.bad:
             raise telegram_bot.TelegramError("Bad Request: message to be replied not found", status=400)
-        super().reply(chat_id, text, reply_to)
+        super().reply(chat_id, text, reply_to, html)
 
 
 def test_one_undeliverable_reply_does_not_block_others(db, cfg):
@@ -203,3 +203,50 @@ def test_bot_loop_survives_unexpected_errors(db, cfg):
             return []
     telegram_bot.run(cfg, db, BoomAPI(), stop, error_wait=0)
     assert len(calls) == 2
+
+
+def _reply(**kw):
+    from readlater.store.db import Reply
+    base = dict(save_id=1, chat_id=5, reply_to=1, status="done", title="A <b>bold</b> & title", tldr="Short & sweet.",
+                key_points=["one", "two < three", "four\n\nfive"], url="https://www.example.org/x?a=1&b=2", error=None)
+    return Reply(**(base | kw))
+
+
+def test_format_summary_is_escaped_telegram_html():
+    text = telegram_bot.format_summary(_reply())
+    assert text.startswith("<b>A &lt;b&gt;bold&lt;/b&gt; &amp; title</b>\n\nShort &amp; sweet.\n\n")
+    assert "• one\n• two &lt; three\n• four\n• five" in text
+    assert text.endswith('<a href="https://www.example.org/x?a=1&amp;b=2">example.org</a>')
+
+
+def test_format_summary_stays_within_limit_without_cutting_tags():
+    text = telegram_bot.format_summary(_reply(key_points=["p" * 900] * 7, tldr="t" * 900))
+    assert len(text.encode("utf-16-le")) // 2 <= 4000
+    assert text.count("<b>") == text.count("</b>") == 1 and text.endswith("</a>")
+
+
+def test_summaries_are_sent_as_html(db, cfg):
+    sent = []
+
+    class HtmlAPI(FakeAPI):
+        def reply(self, chat_id, text, reply_to=None, html=False):
+            sent.append(html)
+    handle_message(FakeAPI(), db, cfg, msg("https://a.com/x"), now=0)
+    _summarize(db, db.conn.execute("SELECT article_id FROM saves").fetchone()[0])
+    deliver_replies(HtmlAPI(), db, now=1)
+    assert sent == [True]
+
+
+def test_api_reply_sets_parse_mode_for_html():
+    import httpx, json as _json
+    seen = []
+    api = telegram_bot.TelegramAPI("1:T", httpx.Client(transport=httpx.MockTransport(
+        lambda r: (seen.append(_json.loads(r.content)), httpx.Response(200, json={"ok": True, "result": {}}))[1])))
+    api.reply(5, "<b>x</b>", html=True)
+    api.reply(5, "plain")
+    assert seen[0]["parse_mode"] == "HTML" and "parse_mode" not in seen[1]
+
+
+def test_format_summary_huge_title_still_fits():
+    text = telegram_bot.format_summary(_reply(title="T" * 5000, tldr="x" * 3000))
+    assert len(text.encode("utf-16-le")) // 2 <= 4000 and text.endswith("</a>")

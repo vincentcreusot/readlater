@@ -1,14 +1,17 @@
 """Telegram intake: long-polls the Bot API, turns your messages into saves, replies with summaries."""
+import html
 import logging
 import os
 import threading
 import time
 from datetime import datetime
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from readlater.export import flatten_points
 from readlater.sources.links import find_items, item_key
 from readlater.store.db import DB, Reply
 
@@ -16,6 +19,7 @@ log = logging.getLogger(__name__)
 TELEGRAM_PRIORITY = 0
 MAX_TEXT = 4000
 POLL_TIMEOUT = 25
+MAX_TITLE = 300
 
 SAVED = "Saved. Summary in a few minutes."
 IN_PROGRESS = "Summary still in progress."
@@ -67,8 +71,12 @@ class TelegramAPI:
             raise TelegramError(self.redact(str(e))) from None
         return r.json()["result"]
 
-    def reply(self, chat_id: int, text: str, reply_to: int | None = None) -> None:
-        params = {"chat_id": chat_id, "text": _fit_utf16(text), "link_preview_options": {"is_disabled": True}}
+    def reply(self, chat_id: int, text: str, reply_to: int | None = None, html: bool = False) -> None:
+        """html=True sends Telegram HTML; the caller escapes the text and keeps it within MAX_TEXT."""
+        params = {"chat_id": chat_id, "text": text if html else _fit_utf16(text),
+                  "link_preview_options": {"is_disabled": True}}
+        if html:
+            params["parse_mode"] = "HTML"
         if reply_to:   # still send if the user deleted the message we answer
             params["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
         self.call("sendMessage", **params)
@@ -144,20 +152,46 @@ def process_updates(api, db: DB, cfg, updates: list[dict], now: int) -> int:
     return offset
 
 
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
 def format_summary(r: Reply) -> str:
-    parts = [r.title, r.tldr, "\n".join(f"• {p}" for p in r.key_points), r.url]
-    return "\n\n".join(p for p in parts if p)
+    """Telegram HTML: bold title, TL;DR, bullets, link. Drops trailing bullets to stay under MAX_TEXT."""
+    esc = html.escape
+    title = r.title if not r.title or len(r.title) <= MAX_TITLE else r.title[:MAX_TITLE].rstrip() + "…"
+    head = f"<b>{esc(title)}</b>" if title else ""
+    link = ""
+    if r.url:
+        host = (urlsplit(r.url).hostname or r.url).removeprefix("www.")
+        link = f'<a href="{esc(r.url, quote=True)}">{esc(host)}</a>'
+    tldr = r.tldr or ""
+    points = flatten_points(r.key_points)
+
+    def build(points: list[str], tldr: str) -> str:
+        bullets = "\n".join(f"• {esc(p)}" for p in points)
+        return "\n\n".join(part for part in (head, esc(tldr), bullets, link) if part)
+
+    text = build(points, tldr)
+    while _utf16_len(text) > MAX_TEXT and points:
+        points = points[:-1]
+        text = build(points, tldr)
+    while _utf16_len(text) > MAX_TEXT and tldr:
+        tldr = tldr[:-200].rstrip()
+        text = build(points, tldr + "…" if tldr else "")
+    return text
 
 
 def deliver_replies(api, db: DB, now: int) -> int:
     sent = 0
     for r in db.pending_replies():
-        if r.status == "done":
+        done = r.status == "done"
+        if done:
             text = format_summary(r)
         else:
             text = f"Couldn't summarize {r.url or 'your text'}: {r.error}\nSend /retry to try again."
         try:
-            api.reply(r.chat_id, text, r.reply_to)
+            api.reply(r.chat_id, text, r.reply_to, html=done)
         except TelegramError as e:
             if e.status is None or e.status == 429 or e.status >= 500:
                 raise   # Telegram or the network is down: try the whole batch again later
