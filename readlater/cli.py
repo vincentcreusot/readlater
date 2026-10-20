@@ -83,11 +83,14 @@ def cmd_bot(cfg, args) -> int:
 
 def cmd_import_mail(cfg, args) -> int:
     from readlater.sources import importer
-    if not args.mbox:
-        print("give --mbox PATH (an mbox export of your mailbox)", file=sys.stderr)
-        return 2
-    messages = importer.iter_mbox(args.mbox)
-    st = importer.import_messages(_db(cfg), messages, cfg.mail.own_addresses, dry_run=args.dry_run,
+    db = _db(cfg)
+    if args.mbox:
+        messages = importer.iter_mbox(args.mbox)
+    else:
+        import getpass
+        password = getpass.getpass(f"IMAP password for {cfg.mail.user}: ")   # never stored
+        messages = importer.iter_imap(cfg.mail, password, db, full=args.full, commit_cursor=not args.dry_run)
+    st = importer.import_messages(db, messages, cfg.mail.own_addresses, dry_run=args.dry_run,
                                   now=int(time.time()))
     print(f"{st.messages} messages, {st.found} articles found, {st.queued} queued")
     return 0
@@ -114,8 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("retry", help="re-queue failed jobs").set_defaults(fn=cmd_retry)
     sub.add_parser("bot", help="run the Telegram bot").set_defaults(fn=cmd_bot)
     m = sub.add_parser("import-mail", help="one-time import of self-sent, subject-less emails")
-    m.add_argument("--mbox", type=Path, help="mbox export to read")
+    m.add_argument("--mbox", type=Path, help="mbox export to read (default: IMAP from [mail] in the config)")
     m.add_argument("--dry-run", action="store_true", help="list what would be imported")
+    m.add_argument("--full", action="store_true", help="IMAP: rescan the whole folder, ignoring the saved position")
     m.set_defaults(fn=cmd_import_mail)
     return p
 

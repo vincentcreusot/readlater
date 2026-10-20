@@ -10,6 +10,10 @@ from email.message import EmailMessage
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
+import imap_tools
+from imap_tools import AND, U
+
+from readlater.config import MailCfg
 from readlater.sources.detect import extract_body, is_candidate
 from readlater.sources.links import find_items, item_key
 from readlater.store.db import DB
@@ -63,3 +67,21 @@ def iter_mbox(path: Path) -> Iterator[EmailMessage]:
     box = mailbox.mbox(path, factory=lambda f: email.message_from_binary_file(f, policy=email.policy.default),
                        create=False)
     yield from box
+
+
+def iter_imap(cfg: MailCfg, password: str, db: DB, *, full: bool, commit_cursor: bool,
+              mailbox_factory=imap_tools.MailBox) -> Iterator[EmailMessage]:
+    """Read the folder read-only (EXAMINE, nothing marked seen), resuming after the stored UID."""
+    key = f"imap:{cfg.user}:{cfg.folder}"
+    with mailbox_factory(cfg.host).login(cfg.user, password) as mb:
+        mb.folder.set(cfg.folder, readonly=True)
+        uidvalidity = str(mb.folder.status(cfg.folder, ["UIDVALIDITY"])["UIDVALIDITY"])
+        stored_validity, _, stored_uid = (db.get_cursor(key) or "").partition(":")
+        last = int(stored_uid) if stored_uid and stored_validity == uidvalidity and not full else 0
+        for msg in mb.fetch(AND(uid=U(last + 1, "*")), mark_seen=False, bulk=50):
+            uid = int(msg.uid)
+            if uid <= last:   # "N:*" returns the newest message even when N is past it
+                continue
+            yield email.message_from_bytes(msg.obj.as_bytes(), policy=email.policy.default)
+            if commit_cursor:   # only after the caller has stored this message
+                db.set_cursor(key, f"{uidvalidity}:{uid}")
