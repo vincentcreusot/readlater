@@ -34,3 +34,16 @@ def test_only_bot_gets_the_token():
 def test_server_config_parses_and_points_at_server_paths():
     cfg = tomllib.loads(Path("deploy/config.server.toml").read_text())
     assert cfg["ollama"]["url"] == "http://<ollama-host>:11434" and cfg["paths"]["data"] == "/srv/readlater/data"
+
+
+def test_scripts_use_the_unit_paths():
+    install, update = Path("deploy/install.sh").read_text(), Path("deploy/update.sh").read_text()
+    for s in (install, update):
+        assert s.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
+    assert "/etc/readlater/repo-url" in install and "/etc/readlater/repo-url" in update
+    assert "/srv/readlater/data" in install
+    assert "uv sync --frozen --no-dev" in update
+    assert update.index("uv sync") < update.index("systemctl restart")   # broken deps never restart
+    assert "/usr/local/sbin/readlater-update" in install and "/usr/local/sbin/readlater-update" in update
+    for s in (install, update):   # never overwrite the user's config or token, never delete anything
+        assert not re.search(r">\s*/etc/readlater/(config\.toml|telegram\.secret)", s) and "rm " not in s
