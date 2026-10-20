@@ -72,3 +72,46 @@ def test_user_agent_includes_optional_contact():
     from readlater.extractor.fetch import make_client
     assert make_client().headers["user-agent"] == "readlater/1.0 (personal archive)"
     assert make_client("me@example.com").headers["user-agent"] == "readlater/1.0 (personal archive; contact: me@example.com)"
+
+
+class FakeStream:
+    def __init__(self, ip):
+        self.ip = ip
+
+    def get_extra_info(self, name):
+        return (self.ip, 443) if name == "server_addr" else None
+
+
+def test_connected_address_must_be_public():
+    """DNS can answer differently on the second lookup (rebinding): check the address actually used."""
+    h = lambda r: httpx.Response(200, headers={"content-type": "text/html"}, content=b"<p>x</p>",
+                                 extensions={"network_stream": FakeStream("10.0.0.5")})
+    with pytest.raises(PermanentError, match="non-public"):
+        fetch_html("https://a.com/", client=client(h), resolve=PUBLIC)
+
+
+def test_deadline_is_checked_between_redirects():
+    calls, now = [], iter([0, 0, 31, 31, 31])
+    def h(req):
+        calls.append(req.url.path)
+        return httpx.Response(302, headers={"location": f"/{len(calls)}"})
+    with pytest.raises(TimeoutError):
+        fetch_html("https://a.com/", client=client(h), resolve=PUBLIC, clock=lambda: next(now))
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("status", [401, 403, 451])
+def test_refused_access_is_permanent(status):
+    with pytest.raises(PermanentError, match=f"refused access \\({status}\\)"):
+        fetch_html("https://a.com/", client=client(lambda r: html(status=status)), resolve=PUBLIC)
+
+
+def test_meta_charset_is_used_when_the_header_has_none():
+    body = '<html><head><meta charset="iso-8859-1"></head><body>café</body></html>'.encode("latin-1")
+    h = lambda r: httpx.Response(200, headers={"content-type": "text/html"}, content=body)
+    assert "café" in fetch_html("https://a.com/", client=client(h), resolve=PUBLIC)[1]
+
+
+def test_unknown_charset_falls_back_to_utf8():
+    h = lambda r: httpx.Response(200, headers={"content-type": "text/html; charset=x-bogus"}, content="é".encode())
+    assert fetch_html("https://a.com/", client=client(h), resolve=PUBLIC)[1] == "é"

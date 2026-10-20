@@ -4,8 +4,8 @@ import re
 from collections.abc import Iterable
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+")
-TRAILING_PUNCT = ".,;:!?"
-CLOSERS = {")": "(", "]": "["}
+TRAILING_PUNCT = ".,;:!?…。、，．！？»›”’」』"   # sentence punctuation and closing quotes, incl. French and CJK
+CLOSERS = {")": "(", "]": "[", "）": "（", "】": "【"}
 PASTED_MIN_WORDS = 300
 
 

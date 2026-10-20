@@ -31,3 +31,9 @@ def test_item_key_is_stable():
 
 def test_is_url():
     assert is_url("https://a.com") and is_url("http://a.com") and not is_url("some pasted text")
+
+
+@pytest.mark.parametrize("text", ["«https://a.com/x»", "“https://a.com/x”", "see https://a.com/x…", "見て https://a.com/x。",
+                                  "‘https://a.com/x’,"])
+def test_unicode_punctuation_is_not_part_of_the_url(text):
+    assert find_items(text) == ["https://a.com/x"]
