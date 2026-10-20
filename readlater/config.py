@@ -28,6 +28,10 @@ class OllamaCfg(_Section):
     num_ctx: int = 16384
 
 
+class FetchCfg(_Section):
+    contact: str = ""   # added to the User-Agent; some sites (Wikipedia) refuse bots without one
+
+
 class PathsCfg(_Section):
     data: Path
 
@@ -35,6 +39,7 @@ class PathsCfg(_Section):
 class Config(_Section):
     telegram: TelegramCfg = TelegramCfg()
     mail: MailCfg = MailCfg()
+    fetch: FetchCfg = FetchCfg()
     ollama: OllamaCfg
     paths: PathsCfg
 

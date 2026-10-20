@@ -167,10 +167,10 @@ class DB:
 
     def finish(self, job_id: int, next_stage: str | None, now: int) -> None:
         with self.tx() as c:
-            article_id, priority = c.execute("UPDATE jobs SET status='done', last_error=NULL WHERE id=? "
-                                             "RETURNING article_id, priority", (job_id,)).fetchone()
-            if next_stage:
-                self.enqueue(article_id, next_stage, priority, now)
+            row = c.execute("UPDATE jobs SET status='done', last_error=NULL WHERE id=? "
+                            "RETURNING article_id, priority", (job_id,)).fetchone()
+            if row and next_stage:   # row is gone when the article was merged away
+                self.enqueue(row[0], next_stage, row[1], now)
 
     def fail(self, job_id: int, error: str, now: int, permanent: bool = False) -> None:
         with self.tx() as c:

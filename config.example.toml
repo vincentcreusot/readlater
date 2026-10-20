@@ -7,6 +7,9 @@ user = "you@example.com"
 folder = "INBOX"                   # Gmail: "[Gmail]/All Mail" catches Inbox + Sent copies
 own_addresses = ["you@example.com"]
 
+[fetch]
+contact = ""                       # optional e-mail or URL for the User-Agent; Wikipedia blocks bots without one
+
 [ollama]
 url = "http://192.168.1.21:11434"
 model = "qwen3.5:4b"

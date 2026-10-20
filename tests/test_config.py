@@ -20,3 +20,7 @@ def test_unknown_section_is_ignored(tmp_path):
     p = tmp_path / "c.toml"
     p.write_text(Path("config.example.toml").read_text() + "\n[dedupe]\nnear_duplicate_cosine = 0.95\n")
     load_config(p)
+
+
+def test_fetch_contact_defaults_to_empty():
+    assert load_config(Path("config.example.toml")).fetch.contact == ""

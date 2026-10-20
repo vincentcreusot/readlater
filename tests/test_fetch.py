@@ -66,3 +66,9 @@ def test_404_is_permanent_500_is_retryable():
 def test_is_public_host_requires_every_address_global():
     assert is_public_host("a.com", resolve=PUBLIC)
     assert not is_public_host("a.com", resolve=lambda h: ["93.184.216.34", "127.0.0.1"])
+
+
+def test_user_agent_includes_optional_contact():
+    from readlater.extractor.fetch import make_client
+    assert make_client().headers["user-agent"] == "readlater/1.0 (personal archive)"
+    assert make_client("me@example.com").headers["user-agent"] == "readlater/1.0 (personal archive; contact: me@example.com)"

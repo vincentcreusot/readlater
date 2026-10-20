@@ -24,8 +24,9 @@ def is_public_host(host: str, resolve: Resolver = default_resolve) -> bool:
     return bool(addrs) and all(ipaddress.ip_address(a).is_global for a in addrs)
 
 
-def make_client() -> httpx.Client:
-    return httpx.Client(timeout=10, follow_redirects=False, headers={"User-Agent": USER_AGENT})
+def make_client(contact: str = "") -> httpx.Client:
+    ua = f"{USER_AGENT[:-1]}; contact: {contact})" if contact else USER_AGENT
+    return httpx.Client(timeout=10, follow_redirects=False, headers={"User-Agent": ua})
 
 
 def fetch_html(url: str, *, client: httpx.Client, resolve: Resolver = default_resolve,
