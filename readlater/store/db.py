@@ -117,6 +117,27 @@ class DB:
     def get_article(self, article_id: int) -> sqlite3.Row | None:
         return self.conn.execute("SELECT * FROM articles WHERE id=?", (article_id,)).fetchone()
 
+    def set_extracted(self, article_id: int, ex) -> tuple[int, bool]:
+        """Store extraction results, or merge into an existing article with the same URL or text.
+
+        Returns (surviving article id, merged).
+        """
+        digest = content_hash(ex.text)
+        with self.tx() as c:
+            other = c.execute("SELECT id FROM articles WHERE id != ? AND (canonical_url=? OR content_hash=?) "
+                              "ORDER BY id LIMIT 1", (article_id, ex.canonical_url, digest)).fetchone()
+            if other:
+                c.execute("UPDATE saves SET article_id=? WHERE article_id=?", (other[0], article_id))
+                c.execute("DELETE FROM jobs WHERE article_id=?", (article_id,))
+                c.execute("DELETE FROM summaries WHERE article_id=?", (article_id,))
+                c.execute("DELETE FROM articles WHERE id=?", (article_id,))
+                return other[0], True
+            c.execute("UPDATE articles SET url=?, canonical_url=?, title=?, site=?, author=?, published_at=?, "
+                      "text=?, content_hash=?, word_count=? WHERE id=?",
+                      (ex.final_url, ex.canonical_url, ex.title, ex.site, ex.author, ex.published_at,
+                       ex.text, digest, len(ex.text.split()), article_id))
+            return article_id, False
+
     def save_summary(self, article_id: int, model: str, data: dict, now: int) -> None:
         self.conn.execute(
             "INSERT INTO summaries (article_id, model, title, tldr, key_points, tags, content_type, language, created_at) "

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Why Small Models Summarize Well</title>
+  <link rel="canonical" href="/post/1">
+  <meta name="author" content="Jane Writer">
+</head>
+<body>
+  <nav><a href="/">Home</a> <a href="/about">About</a></nav>
+  <article>
+    <h1>Why Small Models Summarize Well</h1>
+    <p>Summarization is one of the tasks where small language models come closest to their much larger cousins. The reason is that the answer is already present in the input: the model does not have to recall facts from its training, it only has to notice which sentences carry the main argument and restate them briefly. That makes the task far more forgiving of a limited parameter count than open-ended question answering.</p>
+    <p>On a machine without a graphics card, most of the time goes into reading the article rather than writing the summary. Every token of the input has to pass through the network before the first word of output appears, so a three thousand word essay can take a minute or more to process. Running the work as a background queue hides that delay completely, because nobody is waiting at the screen for the answer.</p>
+    <p>The practical lesson is to keep prompts short, ask for a fixed structure, and validate the output before storing it. A schema with a title, a two sentence summary and a handful of key points is easy for a small model to fill in reliably, and easy for a program to check. When a summary fails validation, the job can simply be retried later with the same input.</p>
+  </article>
+  <footer>Copyright Example Blog</footer>
+</body>
+</html>
