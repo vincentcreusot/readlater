@@ -15,6 +15,7 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 HERE="$(cd "$(dirname "$0")" && pwd)"
+UV_VERSION=0.13.3   # bump together with both checksums from the release's *.sha256 files
 
 apt-get update -qq
 apt-get install -y -qq git sqlite3 curl ca-certificates sudo >/dev/null
@@ -24,8 +25,19 @@ id readlater >/dev/null 2>&1 ||
 install -d -o readlater -g readlater /srv/readlater/data
 install -d -m 755 /etc/readlater
 
-if [ ! -x /usr/local/bin/uv ]; then
-  curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+# uv: a pinned release, verified against its published checksum before it is installed
+if [ "$(/usr/local/bin/uv --version 2>/dev/null | cut -d' ' -f2)" != "$UV_VERSION" ]; then
+  case "$(uname -m)" in
+    x86_64)  UV_SHA256=e4f169ec380f1793b898a6f1fcbacd22db25cf7ca0349a6e96ffb85b69998d04 ;;
+    aarch64) UV_SHA256=611ff684f193a84d2fdad29c5f12505d02ece94984c7c982cdde950eba5c95b9 ;;
+    *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+  target="uv-$(uname -m)-unknown-linux-gnu"
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/uv.tar.gz" "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/$target.tar.gz"
+  echo "$UV_SHA256  $tmp/uv.tar.gz" | sha256sum -c --quiet
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  install -m 755 "$tmp/$target/uv" /usr/local/bin/uv
 fi
 
 printf '%s\n' "$REPO_URL" > /etc/readlater/repo-url

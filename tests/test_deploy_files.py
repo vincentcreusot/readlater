@@ -42,8 +42,28 @@ def test_scripts_use_the_unit_paths():
         assert s.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     assert "/etc/readlater/repo-url" in install and "/etc/readlater/repo-url" in update
     assert "/srv/readlater/data" in install
-    assert "uv sync --frozen --no-dev" in update
+    assert "uv sync --locked --no-dev" in update      # --frozen would ignore a stale uv.lock
     assert update.index("uv sync") < update.index("systemctl restart")   # broken deps never restart
     assert "/usr/local/sbin/readlater-update" in install and "/usr/local/sbin/readlater-update" in update
     for s in (install, update):   # never overwrite the user's config or token, never delete anything
         assert not re.search(r">\s*/etc/readlater/(config\.toml|telegram\.secret)", s) and "rm " not in s
+
+
+def test_failed_sync_rolls_back_the_checkout():
+    update = Path("deploy/update.sh").read_text()
+    assert 'prev="$(' in update and 'checkout -q --detach "$prev"' in update
+    assert update.index('prev="$(') < update.index("fetch")
+
+
+def test_update_refreshes_unit_files_before_restart():
+    update = Path("deploy/update.sh").read_text()
+    assert '"$APP"/deploy/systemd/readlater-*.service /etc/systemd/system/' in update
+    assert update.index("daemon-reload") < update.index("systemctl restart")
+
+
+def test_uv_is_pinned_and_checksummed():
+    install = Path("deploy/install.sh").read_text()
+    assert re.search(r'^UV_VERSION=0\.\d+\.\d+\b', install, re.M)
+    assert "sha256sum -c" in install and not re.search(r"\|\s*(sudo\s+)?(env(\s+\S+=\S*)*\s+)?(ba)?sh\b", install)
+    for arch in ("x86_64", "aarch64"):
+        assert re.search(arch + r"\)\s+UV_SHA256=[0-9a-f]{64}", install)

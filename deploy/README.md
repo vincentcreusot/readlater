@@ -79,7 +79,9 @@ git push origin main
 ssh <node-a> sudo readlater-update     # or: sudo readlater-update <tag-or-branch>
 ```
 
-`readlater-update` fetches the commit, installs the locked dependencies (`uv sync --frozen`) and restarts both services. If the dependency step fails, it stops before the restart, so the old code keeps running. It refuses to run if someone edited files in `/srv/readlater/app` by hand.
+`readlater-update` fetches the commit, installs the locked dependencies (`uv sync --locked`), refreshes the systemd units and restarts both services. If the dependencies fail to install (for example, `pyproject.toml` changed but `uv.lock` wasn't updated: run `uv lock` and commit it), it checks the previous commit back out and stops without restarting, so the old code keeps running. It refuses to run if someone edited files in `/srv/readlater/app` by hand.
+
+To roll back to an earlier release: `sudo readlater-update <commit-sha>`.
 
 Run exactly one bot per token: once the server bot runs, stop running `readlater bot` on the dev machine.
 
