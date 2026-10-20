@@ -95,3 +95,23 @@ def test_bad_output_is_validation_error():
     bad = dict(OK, key_points=["only one"])
     with pytest.raises(pydantic.ValidationError):
         run(lambda r: httpx.Response(200, json={"message": {"content": json.dumps(bad)}}))
+
+
+def test_ollama_busy_is_transient():
+    with pytest.raises(TransientError, match="busy"):
+        run(lambda r: httpx.Response(503, json={"error": "server busy"}))
+
+
+def test_connect_timeout_is_short_read_timeout_long():
+    seen = {}
+
+    def h(req):
+        seen.update(req.extensions["timeout"])
+        return httpx.Response(200, json={"message": {"content": json.dumps(OK)}})
+    run(h)
+    assert seen["connect"] == 10 and seen["read"] == 900
+
+
+def test_content_type_is_one_of_the_five():
+    schema = Summary.model_json_schema()
+    assert schema["properties"]["content_type"]["enum"] == ["news", "how-to", "opinion", "research", "other"]
