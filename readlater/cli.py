@@ -87,7 +87,8 @@ def cmd_import_mail(cfg, args) -> int:
         messages = importer.iter_imap(cfg.mail, password, db, full=args.full, commit_cursor=not args.dry_run)
     st = importer.import_messages(db, messages, cfg.mail.own_addresses, dry_run=args.dry_run,
                                   now=int(time.time()))
-    print(f"{st.messages} messages, {st.found} articles found, {st.queued} queued")
+    print(f"{st.messages} messages, {st.found} articles found, {st.queued} queued"
+          + (f", {st.errors} unreadable (see log)" if st.errors else ""))
     return 0
 
 

@@ -41,7 +41,7 @@ def test_ollama_unreachable(tmp_path):
     def h(r):
         raise httpx.ConnectError("Connection refused")
     res = check_ollama(CFG(tmp_path), httpx.Client(transport=httpx.MockTransport(h)))
-    assert not res.ok and res.detail.startswith("cannot reach http://192.168.1.21:11434")
+    assert not res.ok and res.detail.startswith(f"cannot reach {CFG(tmp_path).ollama.url}")
 
 
 def test_telegram_ok_and_bad_token():
@@ -63,3 +63,16 @@ def test_cli_check_exit_code(tmp_path, monkeypatch, capsys):
     cfg = Path("config.example.toml").read_text().replace('data = "./data"', f'data = "{tmp_path}"')
     (tmp_path / "c.toml").write_text(cfg); monkeypatch.setenv("READLATER_CONFIG", str(tmp_path / "c.toml"))
     assert main(["check"]) == 1 and "FAIL x: bad" in capsys.readouterr().out
+
+
+def test_unreplaced_placeholder_is_named(tmp_path):
+    cfg = CFG(tmp_path)
+    cfg.ollama.url = "http://<ollama-host>:11434"
+    res = check_ollama(cfg, httpx.Client())
+    assert not res.ok and res.detail == "replace the <ollama-host> placeholder in [ollama] url"
+
+
+def test_check_does_not_create_the_data_dir(tmp_path):
+    target = tmp_path / "not-yet"
+    r = {c.name: c for c in check_config(CFG(target))}
+    assert r["data dir"].ok and "will be created" in r["data dir"].detail and not target.exists()

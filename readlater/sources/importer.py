@@ -2,6 +2,7 @@
 import email
 import email.policy
 import hashlib
+import logging
 import mailbox
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from readlater.sources.detect import extract_body, is_candidate
 from readlater.sources.links import find_items, item_key
 from readlater.store.db import DB
 
+log = logging.getLogger(__name__)
 EMAIL_PRIORITY = 10
 
 
@@ -26,6 +28,7 @@ class ImportStats:
     messages: int = 0
     found: int = 0
     queued: int = 0
+    errors: int = 0
 
 
 def _date(msg: EmailMessage, default: int) -> int:
@@ -40,26 +43,35 @@ def _message_id(msg: EmailMessage) -> str:
     return mid or hashlib.sha256(msg.as_bytes()).hexdigest()
 
 
+def _import_one(db: DB, msg: EmailMessage, own: list[str], st: ImportStats, *, dry_run: bool, now: int,
+                out: Callable[..., None]) -> None:
+    if not is_candidate(msg, own):
+        return
+    items = find_items(*extract_body(msg))
+    st.found += len(items)
+    date = _date(msg, now)
+    if dry_run:
+        for item in items:
+            out(f"{datetime.fromtimestamp(date):%Y-%m-%d} {item[:120]}")
+        return
+    mid = _message_id(msg)
+    for item in items:
+        r = db.add_save(source="email", source_id=f"{mid}:{item_key(item)}", saved_at=date, payload=item,
+                        priority=EMAIL_PRIORITY, now=now)
+        st.queued += r.created
+    db.add_email(mid, date, parseaddr(str(msg.get("From", "")))[1])
+
+
 def import_messages(db: DB, messages: Iterable[EmailMessage], own: list[str], *, dry_run: bool, now: int,
                     out: Callable[..., None] = print) -> ImportStats:
     st = ImportStats()
     for msg in messages:
         st.messages += 1
-        if not is_candidate(msg, own):
-            continue
-        items = find_items(*extract_body(msg))
-        st.found += len(items)
-        date = _date(msg, now)
-        if dry_run:
-            for item in items:
-                out(f"{datetime.fromtimestamp(date):%Y-%m-%d} {item[:120]}")
-            continue
-        mid = _message_id(msg)
-        for item in items:
-            r = db.add_save(source="email", source_id=f"{mid}:{item_key(item)}", saved_at=date, payload=item,
-                            priority=EMAIL_PRIORITY, now=now)
-            st.queued += r.created
-        db.add_email(mid, date, parseaddr(str(msg.get("From", "")))[1])
+        try:
+            _import_one(db, msg, own, st, dry_run=dry_run, now=now, out=out)
+        except Exception as e:   # a malformed message must not stop the whole import
+            st.errors += 1
+            log.warning("skipped message %s: %s", msg.get("Message-ID", "(no Message-ID)"), e)
     return st
 
 

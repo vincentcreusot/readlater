@@ -1,5 +1,6 @@
 """readlater check: confirm the config, data folder, Ollama and the Telegram token before going live."""
 import os
+import re
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,19 +30,32 @@ def check_config(cfg: Config) -> list[CheckResult]:
         users = CheckResult("allowed users", False, "set [telegram] allowed_user_ids to your numeric Telegram ID")
     else:
         users = CheckResult("allowed users", True, ", ".join(map(str, ids)))
-    try:
-        cfg.paths.data.mkdir(parents=True, exist_ok=True)
-        fd, probe = tempfile.mkstemp(dir=cfg.paths.data)
-        os.close(fd)
-        os.unlink(probe)
-        data = CheckResult("data dir", True, str(cfg.paths.data))
-    except OSError as e:
-        data = CheckResult("data dir", False, f"cannot write to {cfg.paths.data}: {_first_line(e)}")
-    return [users, data]
+    return [users, _check_data_dir(cfg.paths.data)]
+
+
+def _check_data_dir(path) -> CheckResult:
+    """Whether readlater can write there, without creating anything."""
+    if path.exists():
+        try:
+            fd, probe = tempfile.mkstemp(dir=path)
+            os.close(fd)
+            os.unlink(probe)
+            return CheckResult("data dir", True, str(path))
+        except OSError as e:
+            return CheckResult("data dir", False, f"cannot write to {path}: {_first_line(e)}")
+    parent = path.parent
+    while not parent.exists():
+        parent = parent.parent
+    if os.access(parent, os.W_OK | os.X_OK):
+        return CheckResult("data dir", True, f"{path} (will be created)")
+    return CheckResult("data dir", False, f"cannot create {path}: {parent} is not writable")
 
 
 def check_ollama(cfg: Config, client: httpx.Client) -> CheckResult:
     url, model = cfg.ollama.url, cfg.ollama.model
+    placeholder = re.search(r"<[^>]+>", url)
+    if placeholder:
+        return CheckResult("ollama", False, f"replace the {placeholder.group(0)} placeholder in [ollama] url")
     try:
         r = client.get(f"{url}/api/tags", timeout=10)
         r.raise_for_status()

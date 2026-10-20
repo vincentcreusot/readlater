@@ -43,3 +43,16 @@ def test_telegram_share_of_imported_link_is_known(db):
 def test_iter_mbox(tmp_path):
     box = mailbox.mbox(tmp_path / "m.mbox"); box.add(make_msg()); box.flush()
     assert [is_candidate(m, OWN) for m in iter_mbox(tmp_path / "m.mbox")] == [True]
+
+
+def test_one_broken_message_does_not_stop_the_import(db, monkeypatch):
+    import readlater.sources.importer as importer
+    real = importer.is_candidate
+    def flaky(msg, own):
+        if msg["Message-ID"] == "<bad@x>":
+            raise ValueError("bad header")
+        return real(msg, own)
+    monkeypatch.setattr(importer, "is_candidate", flaky)
+    msgs = [make_msg(headers={"Message-ID": "<bad@x>"}), make_msg(headers={"Message-ID": "<ok@x>"})]
+    st = import_messages(db, msgs, OWN, dry_run=False, now=0, out=lambda *a: None)
+    assert (st.messages, st.errors, st.queued) == (2, 1, 1)
