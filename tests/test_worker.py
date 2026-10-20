@@ -46,7 +46,7 @@ def test_permanent_error_fails_immediately(ctx, monkeypatch):
     monkeypatch.setattr(worker, "extract", Mock(side_effect=PermanentError("not an HTML page: application/pdf")))
     save(ctx)
     assert process_one(ctx, ("extract",)) == "failed"
-    assert ctx.db.conn.execute("SELECT status FROM jobs").fetchone()[0] == "failed"
+    assert ctx.db.conn.execute("SELECT status FROM jobs").fetchone()[0] == "rejected"
 
 
 def test_other_error_backs_off(ctx, monkeypatch):
@@ -109,3 +109,14 @@ def test_worker_run_creates_schema(tmp_path):
     import threading
     cfg = load_config(Path("config.example.toml")); cfg.paths.data = tmp_path
     worker.run(cfg, threading.Event(), once=True)        # must not raise "no such table"
+
+
+def test_run_once_leaves_another_workers_running_job_alone(tmp_path, monkeypatch):
+    import threading
+    cfg = load_config(Path("config.example.toml")); cfg.paths.data = tmp_path
+    from readlater.store.db import DB
+    d = DB(cfg.db_path); d.init_schema()
+    d.add_save(source="t", source_id="u", saved_at=0, payload="https://a.com/x", priority=0, now=0)
+    d.claim(("extract",), now=0)      # a long-running worker is busy with it
+    worker.run(cfg, threading.Event(), once=True)
+    assert d.conn.execute("SELECT status FROM jobs").fetchone()[0] == "running"

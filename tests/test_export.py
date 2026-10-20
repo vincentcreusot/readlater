@@ -38,7 +38,7 @@ def test_full_markdown_has_frontmatter_and_text(db):
 def test_unsummarized_article_shows_job_status(db):
     aid = make_article(db, summarize=False)
     db.fail(db.claim(("extract",), now=SAVED).id, "not an HTML page: application/pdf", now=SAVED, permanent=True)
-    assert "_extract: failed — not an HTML page: application/pdf_" in article_markdown(db, aid)
+    assert "_extract: rejected — not an HTML page: application/pdf_" in article_markdown(db, aid)
 
 
 def test_missing_article_is_none(db):

@@ -31,7 +31,7 @@ class Reply:
     save_id: int
     chat_id: int
     reply_to: int
-    status: str            # done | failed
+    status: str            # done | failed | rejected
     title: str | None
     tldr: str | None
     key_points: list[str]
@@ -98,7 +98,9 @@ class DB:
 
             if is_url(payload):
                 key = canonicalize(payload)
-                found = c.execute("SELECT id FROM articles WHERE canonical_url=?", (key,)).fetchone()
+                found = c.execute("SELECT id FROM articles WHERE canonical_url=? "
+                                  "UNION ALL SELECT article_id FROM url_aliases WHERE canonical_url=? LIMIT 1",
+                                  (key, key)).fetchone()
             else:
                 text = payload.strip()
                 digest = content_hash(text)
@@ -124,7 +126,8 @@ class DB:
             if found:
                 # sharing a failed article again is a request to try again
                 retrying = c.execute("UPDATE jobs SET status='pending', attempts=0, next_try_at=0 "
-                                     "WHERE article_id=? AND status='failed'", (article_id,)).rowcount > 0
+                                     "WHERE article_id=? AND status IN ('failed', 'rejected')",
+                                     (article_id,)).rowcount > 0
                 return SaveResult(True, True, article_id, first, tldr[0] if tldr else None, retrying)
             return SaveResult(True, False, article_id, None, None)
 
@@ -143,6 +146,7 @@ class DB:
         digest = content_hash(ex.text)
         host = urlsplit(ex.canonical_url).hostname
         with self.tx() as c:
+            old_key = c.execute("SELECT canonical_url FROM articles WHERE id=?", (article_id,)).fetchone()[0]
             other = c.execute("SELECT id, text FROM articles WHERE id != ? AND canonical_url=?",
                               (article_id, ex.canonical_url)).fetchone()
             if not other:
@@ -155,9 +159,11 @@ class DB:
                 keep = other["id"]
                 priority = c.execute("SELECT min(priority) FROM jobs WHERE article_id=?", (article_id,)).fetchone()[0]
                 c.execute("UPDATE saves SET article_id=? WHERE article_id=?", (keep, article_id))
+                c.execute("UPDATE url_aliases SET article_id=? WHERE article_id=?", (keep, article_id))
                 c.execute("DELETE FROM jobs WHERE article_id=?", (article_id,))
                 c.execute("DELETE FROM summaries WHERE article_id=?", (article_id,))
                 c.execute("DELETE FROM articles WHERE id=?", (article_id,))
+                self._alias(c, old_key, keep)
                 if other["text"] is None:
                     # the existing article was never extracted (failed or still queued): use this extraction
                     self._store_extraction(c, keep, ex, digest)
@@ -168,7 +174,14 @@ class DB:
                               "next_try_at=0", (keep, priority if priority is not None else 0))
                 return keep, True
             self._store_extraction(c, article_id, ex, digest)
+            if old_key != ex.canonical_url:
+                self._alias(c, old_key, article_id)
             return article_id, False
+
+    @staticmethod
+    def _alias(c, key: str | None, article_id: int) -> None:
+        if key:
+            c.execute("INSERT OR IGNORE INTO url_aliases (canonical_url, article_id) VALUES (?, ?)", (key, article_id))
 
     @staticmethod
     def _store_extraction(c, article_id: int, ex, digest: str) -> None:
@@ -215,7 +228,9 @@ class DB:
         with self.tx() as c:
             attempts = c.execute("UPDATE jobs SET attempts=attempts+1, last_error=? WHERE id=? RETURNING attempts",
                                  (error, job_id)).fetchone()[0]
-            if permanent or attempts >= MAX_ATTEMPTS:
+            if permanent:
+                c.execute("UPDATE jobs SET status='rejected' WHERE id=?", (job_id,))
+            elif attempts >= MAX_ATTEMPTS:
                 c.execute("UPDATE jobs SET status='failed' WHERE id=?", (job_id,))
             else:
                 c.execute("UPDATE jobs SET status='pending', next_try_at=? WHERE id=?",
@@ -242,15 +257,18 @@ class DB:
         rows = self.conn.execute("""
             SELECT s.id, s.reply_chat, s.reply_to, a.url, coalesce(a.title, sm.title) AS title,
                    sm.tldr, sm.key_points,
-                   (SELECT last_error FROM jobs j WHERE j.article_id=a.id AND j.status='failed' LIMIT 1) AS error
+                   (SELECT last_error FROM jobs j WHERE j.article_id=a.id AND j.status IN ('failed', 'rejected')
+                     LIMIT 1) AS error,
+                   (SELECT status FROM jobs j WHERE j.article_id=a.id AND j.status IN ('failed', 'rejected')
+                     LIMIT 1) AS fail_status
               FROM saves s JOIN articles a ON a.id = s.article_id
               LEFT JOIN summaries sm ON sm.article_id = a.id
              WHERE s.reply_chat IS NOT NULL AND s.replied_at IS NULL
                AND (sm.article_id IS NOT NULL
-                    OR EXISTS (SELECT 1 FROM jobs j WHERE j.article_id=a.id AND j.status='failed'))
+                    OR EXISTS (SELECT 1 FROM jobs j WHERE j.article_id=a.id AND j.status IN ('failed', 'rejected')))
              ORDER BY s.id""").fetchall()
         return [Reply(save_id=r["id"], chat_id=r["reply_chat"], reply_to=r["reply_to"],
-                      status="done" if r["tldr"] is not None else "failed", title=r["title"], tldr=r["tldr"],
+                      status="done" if r["tldr"] is not None else r["fail_status"], title=r["title"], tldr=r["tldr"],
                       key_points=json.loads(r["key_points"]) if r["key_points"] else [],
                       url=r["url"], error=r["error"]) for r in rows]
 

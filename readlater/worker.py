@@ -102,7 +102,8 @@ def _loop(cfg: Config, stages: tuple[str, ...], http: httpx.Client, stop: thread
 def run(cfg: Config, stop: threading.Event, once: bool = False) -> None:
     db = DB(cfg.db_path)
     db.init_schema()
-    db.reset_running()
+    if not once:   # a one-off run must not steal jobs a long-running worker is processing
+        db.reset_running()
     db.close()
     if once:
         # extract everything first so the summarize pass sees all of it

@@ -40,12 +40,18 @@ CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY,
   article_id INTEGER NOT NULL REFERENCES articles(id),
   stage TEXT NOT NULL,               -- extract | summarize
-  status TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | running | done | failed (retries used up) | rejected (retrying can't help)
   priority INTEGER NOT NULL,         -- lower runs first: telegram 0, email 10
   attempts INTEGER NOT NULL DEFAULT 0,
   next_try_at INTEGER NOT NULL,
   last_error TEXT,
   UNIQUE (article_id, stage)
+);
+
+-- earlier dedupe keys of an article (a short link before its redirect, a merged duplicate's URL)
+CREATE TABLE IF NOT EXISTS url_aliases (
+  canonical_url TEXT PRIMARY KEY,
+  article_id INTEGER NOT NULL REFERENCES articles(id)
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (source TEXT PRIMARY KEY, cursor TEXT);

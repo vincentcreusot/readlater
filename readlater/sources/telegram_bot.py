@@ -24,6 +24,7 @@ MAX_TITLE = 300
 SAVED = "Saved. Summary in a few minutes."
 IN_PROGRESS = "Summary still in progress."
 HELP = "Send me a link, or paste an article."
+SORRY = "Sorry, I couldn't save that. Please send it again."
 START = "Share a link or paste an article and I'll summarize it. Commands: /recent, /retry"
 
 
@@ -147,6 +148,10 @@ def process_updates(api, db: DB, cfg, updates: list[dict], now: int) -> int:
                 log.info("ignoring message from user id %s", sender)
         except Exception:
             log.exception("failed to handle update %s", u.get("update_id"))
+            try:   # tell the user rather than dropping the share silently
+                api.reply(m["chat"]["id"], SORRY, m["message_id"])
+            except Exception:
+                log.exception("could not send the error reply either")
         offset = u["update_id"] + 1
         db.set_cursor("telegram", str(offset))   # after handling: at-least-once; saves dedupe repeats
     return offset
@@ -189,7 +194,8 @@ def deliver_replies(api, db: DB, now: int) -> int:
         if done:
             text = format_summary(r)
         else:
-            text = f"Couldn't summarize {r.url or 'your text'}: {r.error}\nSend /retry to try again."
+            hint = "Share the link again to retry." if r.status == "rejected" else "Send /retry to try again."
+            text = f"Couldn't summarize {r.url or 'your text'}: {r.error}\n{hint}"
         try:
             api.reply(r.chat_id, text, r.reply_to, html=done)
         except TelegramError as e:

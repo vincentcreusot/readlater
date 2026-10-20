@@ -68,7 +68,8 @@ def test_bad_update_does_not_block_the_next(api, db, cfg, monkeypatch):
     monkeypatch.setattr(telegram_bot, "handle_message", flaky)
     ups = [{"update_id": 1, "message": msg("https://a.com", mid=1)},
            {"update_id": 2, "message": msg("https://b.com", mid=2)}]
-    assert process_updates(api, db, cfg, ups, now=0) == 3 and len(api.sent) == 1
+    assert process_updates(api, db, cfg, ups, now=0) == 3
+    assert api.sent[0] == (5, "Sorry, I couldn't save that. Please send it again.", 1) and len(api.sent) == 2
 
 
 def test_deliver_summary_once(api, db, cfg):
@@ -86,7 +87,15 @@ def test_deliver_failed_job_tells_user(api, db, cfg):
     db.fail(job.id, "not an HTML page: application/pdf", now=0, permanent=True)
     deliver_replies(api, db, now=1)
     assert api.sent[-1][1] == ("Couldn't summarize https://a.com/f.pdf: not an HTML page: application/pdf\n"
-                               "Send /retry to try again.")
+                               "Share the link again to retry.")
+
+
+def test_deliver_exhausted_job_suggests_retry(api, db, cfg):
+    handle_message(api, db, cfg, msg("https://a.com/x"), now=0)
+    for t in (0, 300, 2100, 9300):
+        db.fail(db.claim(("extract",), now=t).id, "ReadTimeout: timed out", now=t)
+    deliver_replies(api, db, now=10_000)
+    assert api.sent[-1][1].endswith("ReadTimeout: timed out\nSend /retry to try again.")
 
 
 def test_commands(api, db, cfg):
@@ -115,7 +124,8 @@ def test_already_saved_with_tldr_is_not_sent_again(api, db, cfg):
 
 def test_retry_replies_again_when_it_succeeds(api, db, cfg):
     handle_message(api, db, cfg, msg("https://a.com/x"), now=0)
-    db.fail(db.claim(("extract",), now=0).id, "timeout", now=0, permanent=True)
+    for t in (0, 300, 2100, 9300):
+        db.fail(db.claim(("extract",), now=t).id, "timeout", now=t)
     deliver_replies(api, db, now=1)
     handle_message(api, db, cfg, msg("/retry", mid=2), now=2)
     job = db.claim(("extract",), now=2); db.finish(job.id, None, now=2)

@@ -25,10 +25,17 @@ def test_fail_backs_off_then_parks(db):
     assert tuple(row) == ("failed", 4, "last")
 
 
-def test_permanent_fail_and_retry_failed(db):
+def test_permanent_fail_is_rejected_and_skipped_by_retry(db):
     mk(db, "https://a.com/1", 0)
     db.fail(db.claim(("extract",), now=0).id, "404", now=0, permanent=True)
-    assert db.conn.execute("SELECT status FROM jobs").fetchone()[0] == "failed"
+    assert db.conn.execute("SELECT status FROM jobs").fetchone()[0] == "rejected"
+    assert db.retry_failed() == 0
+
+
+def test_retry_failed_requeues_exhausted_jobs(db):
+    mk(db, "https://a.com/1", 0)
+    for t in (0, 300, 2100, 9300):
+        db.fail(db.claim(("extract",), now=t).id, "timeout", now=t)
     assert db.retry_failed() == 1 and db.claim(("extract",), now=0).attempts == 0
 
 

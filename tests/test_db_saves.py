@@ -42,3 +42,21 @@ def test_cursor_roundtrip_and_email_dedupe(db):
     db.set_cursor("telegram", "42"); assert db.get_cursor("telegram") == "42"
     db.add_email("<m@x>", 5, "me@x.com"); db.add_email("<m@x>", 5, "me@x.com")
     assert db.conn.execute("SELECT count(*) FROM emails").fetchone()[0] == 1
+
+
+def test_reshared_short_link_is_known_without_refetching(db):
+    from tests_helpers_extracted import extracted
+    r = add(db, "1:1:a", "https://t.co/abc")
+    db.set_extracted(r.article_id, extracted("https://blog.com/post/1"))
+    again = add(db, "1:2:a", "https://t.co/abc")
+    assert again.known_article and again.article_id == r.article_id
+    assert db.conn.execute("SELECT count(*) FROM jobs WHERE stage='extract'").fetchone()[0] == 1
+
+
+def test_short_link_of_a_merged_duplicate_is_remembered(db):
+    from tests_helpers_extracted import extracted
+    keep = add(db, "1:1:a", "https://blog.com/post/1").article_id
+    db.set_extracted(keep, extracted("https://blog.com/post/1"))
+    dup = add(db, "1:2:a", "https://bit.ly/q").article_id
+    db.set_extracted(dup, extracted("https://blog.com/post/1"))
+    assert add(db, "1:3:a", "https://bit.ly/q").article_id == keep
