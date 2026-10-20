@@ -101,6 +101,7 @@ def _loop(cfg: Config, stages: tuple[str, ...], http: httpx.Client, stop: thread
 
 def run(cfg: Config, stop: threading.Event, once: bool = False) -> None:
     db = DB(cfg.db_path)
+    db.init_schema()
     db.reset_running()
     db.close()
     if once:

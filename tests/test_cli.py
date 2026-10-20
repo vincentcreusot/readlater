@@ -23,3 +23,11 @@ def test_show_prints_markdown(tmp_path, monkeypatch, capsys):
     assert capsys.readouterr().out.startswith("# https://example.com/a")
     assert main(["export", str(tmp_path / "out")]) == 0
     assert "exported 0 articles" in capsys.readouterr().out
+
+
+def test_commands_work_without_init_db(tmp_path, monkeypatch, capsys):
+    cfg = Path("config.example.toml").read_text().replace('data = "./data"', f'data = "{tmp_path}"')
+    (tmp_path / "c.toml").write_text(cfg)
+    monkeypatch.setenv("READLATER_CONFIG", str(tmp_path / "c.toml"))
+    assert main(["retry"]) == 0
+    assert "re-queued 0 failed jobs" in capsys.readouterr().out

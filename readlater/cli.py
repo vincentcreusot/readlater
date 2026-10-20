@@ -13,7 +13,9 @@ from readlater.store.db import DB
 
 
 def _db(cfg) -> DB:
-    return DB(cfg.db_path)
+    db = DB(cfg.db_path)
+    db.init_schema()   # idempotent: a fresh server works without a separate init-db
+    return db
 
 
 def cmd_init_db(cfg, args) -> int:

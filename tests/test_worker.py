@@ -103,3 +103,9 @@ def test_worker_loop_survives_errors_outside_a_stage(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "process_one", fake)
     monkeypatch.setattr(worker, "IDLE_SECONDS", 0)
     worker._loop(cfg, ("extract",), httpx.Client(), threading.Event(), once=True)
+
+
+def test_worker_run_creates_schema(tmp_path):
+    import threading
+    cfg = load_config(Path("config.example.toml")); cfg.paths.data = tmp_path
+    worker.run(cfg, threading.Event(), once=True)        # must not raise "no such table"
