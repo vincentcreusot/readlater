@@ -91,6 +91,16 @@ def cmd_import_mail(cfg, args) -> int:
     return 0
 
 
+def cmd_check(cfg, args) -> int:
+    import httpx
+    from readlater import check
+    with httpx.Client() as client:
+        results = check.run_checks(cfg, client)
+    for r in results:
+        print(f"{'ok  ' if r.ok else 'FAIL'} {r.name}: {r.detail}")
+    return 0 if all(r.ok for r in results) else 1
+
+
 def cmd_retry(cfg, args) -> int:
     print(f"re-queued {_db(cfg).retry_failed()} failed jobs")
     return 0
@@ -115,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     e.set_defaults(fn=cmd_export)
     sub.add_parser("retry", help="re-queue failed jobs").set_defaults(fn=cmd_retry)
     sub.add_parser("bot", help="run the Telegram bot").set_defaults(fn=cmd_bot)
+    sub.add_parser("check", help="check config, data dir, Ollama and the bot token").set_defaults(fn=cmd_check)
     m = sub.add_parser("import-mail", help="one-time import of self-sent, subject-less emails")
     m.add_argument("--mbox", type=Path, help="mbox export to read (default: IMAP from [mail] in the config)")
     m.add_argument("--dry-run", action="store_true", help="list what would be imported")
