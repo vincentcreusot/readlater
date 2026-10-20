@@ -1,0 +1,17 @@
+[telegram]
+allowed_user_ids = [123456789]     # your numeric Telegram ID; everyone else is ignored
+
+[mail]                             # only read by the one-time import-mail command
+host = "imap.example.com"
+user = "you@example.com"
+folder = "INBOX"                   # Gmail: "[Gmail]/All Mail" catches Inbox + Sent copies
+own_addresses = ["you@example.com"]
+
+[ollama]
+url = "http://192.168.1.21:11434"
+model = "qwen3.5:4b"
+embed_model = "nomic-embed-text"
+num_ctx = 16384
+
+[paths]
+data = "./data"

@@ -1,0 +1,24 @@
+[project]
+name = "readlater"
+version = "0.1.0"
+description = "Local read-later archive: saves links, summarizes them with a local LLM"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx",
+  "trafilatura",
+  "pydantic",
+  "imap-tools",
+]
+
+[project.scripts]
+readlater = "readlater.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
